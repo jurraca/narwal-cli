@@ -3,10 +3,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use narwal_cli::PublishConfig;
 use std::path::PathBuf;
 
-/// Publish a Nix binary cache to Blossom + Nostr.
-///
-/// Default (no subcommand): publish STORE_PATHS. Use the `pair` subcommand
-/// for the interactive NIP-46 pairing ceremony on its own.
+/// Publish Nix packages to Blossom and Nostr.
 #[derive(Parser)]
 #[command(name = "narwal-cli")]
 struct Cli {
@@ -14,7 +11,6 @@ struct Cli {
     store_paths: Vec<PathBuf>,
 
     /// Path to the file holding the Nostr secret key (nsec or hex).
-    /// Key material is file-only by design: CLI args leak via ps/history.
     /// Also settable via NARWAL_SEC_FILE (a path, never key material).
     /// Exactly one of --sec-file / --bunker / --qr is required for publish.
     #[arg(long = "sec-file", env = "NARWAL_SEC_FILE", conflicts_with_all = ["bunker", "qr"])]
