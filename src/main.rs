@@ -265,8 +265,13 @@ mod tests {
     fn rejects_sec_file_and_bunker_together() {
         let mut args = base_args();
         args.extend(["--bunker", "bunker://abc?relay=wss://relay:32847"]);
-        let err = Cli::try_parse_from(args).err().expect("conflict must be rejected");
-        assert!(err.to_string().contains("cannot be used with"), "unexpected: {err}");
+        let err = Cli::try_parse_from(args)
+            .err()
+            .expect("conflict must be rejected");
+        assert!(
+            err.to_string().contains("cannot be used with"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]
@@ -289,8 +294,13 @@ mod tests {
     fn rejects_qr_with_sec_file() {
         let mut args = base_args();
         args.push("--qr");
-        let err = Cli::try_parse_from(args).err().expect("conflict must be rejected");
-        assert!(err.to_string().contains("cannot be used with"), "unexpected: {err}");
+        let err = Cli::try_parse_from(args)
+            .err()
+            .expect("conflict must be rejected");
+        assert!(
+            err.to_string().contains("cannot be used with"),
+            "unexpected: {err}"
+        );
     }
 
     #[test]
@@ -320,7 +330,13 @@ mod tests {
 
     #[test]
     fn validate_publish_rejects_missing_blossom() {
-        let args = vec!["narwal-cli", "--sec-file", "/run/secrets/x", "--relay", "ws://r"];
+        let args = vec![
+            "narwal-cli",
+            "--sec-file",
+            "/run/secrets/x",
+            "--relay",
+            "ws://r",
+        ];
         let cli = Cli::try_parse_from(args).unwrap();
         let err = validate_publish(&cli).expect_err("must be rejected");
         assert!(err.contains("--blossom"), "unexpected: {err}");
@@ -352,7 +368,10 @@ mod tests {
         let Some(Commands::Pair { pairing }) = cli.command else {
             panic!("expected pair subcommand");
         };
-        assert_eq!(pairing.bunker_relays, vec!["wss://relay.example.com".to_string()]);
+        assert_eq!(
+            pairing.bunker_relays,
+            vec!["wss://relay.example.com".to_string()]
+        );
         assert_eq!(pairing.pairing_file, Some(PathBuf::from("/tmp/p.json")));
     }
 

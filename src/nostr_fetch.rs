@@ -65,18 +65,20 @@ pub async fn fetch_latest_root(config: FetchConfig) -> Result<Option<RootEvent>>
         filter = filter.identifier(channel);
     }
 
-    if let Some(author_hex) = &config.author {
-        let pk: PublicKey = author_hex.parse().map_err(|e| anyhow!("invalid pubkey: {}", e))?;
+    if let Some(author) = &config.author {
+        let pk: PublicKey = author
+            .parse()
+            .map_err(|e| anyhow!("invalid publisher pubkey {:?}: {}", author, e))?;
         filter = filter.author(pk);
     }
 
-    let events = client.fetch_events(filter, std::time::Duration::from_secs(10)).await?;
+    let events = client
+        .fetch_events(filter, std::time::Duration::from_secs(10))
+        .await?;
 
     // Get the latest event (fetch_events returns newest-first in practice,
     // but sort by created_at to be safe)
-    let latest = events
-        .into_iter()
-        .max_by_key(|e| e.created_at);
+    let latest = events.into_iter().max_by_key(|e| e.created_at);
 
     let Some(event) = latest else {
         client.disconnect().await;
