@@ -38,8 +38,7 @@ pub fn compress(nar_bytes: &[u8], compression: Compression) -> Result<Compressed
         }
         Compression::Zstd => {
             // zstd level 6, matching Nix's default
-            let compressed = zstd::encode_all(nar_bytes, 6)?;
-            compressed
+            zstd::encode_all(nar_bytes, 6)?
         }
         Compression::None => nar_bytes.to_vec(),
         other => return Err(anyhow::anyhow!("unsupported compression: {:?}", other)),

@@ -249,36 +249,26 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
             .collect();
 
         // 4e. Build narinfo.
+        let narinfo_input = narinfo::NarInfoInput {
+            store_dir: &store_dir,
+            store_path: &sp,
+            url: &url,
+            nar_hash: entry.nar_hash,
+            nar_size: entry.nar_size,
+            compression: compression.clone(),
+            file_hash: compressed.file_hash,
+            file_size: compressed.file_size,
+            references: &ref_paths,
+        };
+
         let sigs: Vec<nix_narinfo::NarInfoSignature> = if let Some(ref sk) = signing_key {
-            let unsigned = narinfo::build_narinfo(
-                &store_dir,
-                &sp,
-                &url,
-                entry.nar_hash,
-                entry.nar_size,
-                compression.clone(),
-                compressed.file_hash,
-                compressed.file_size,
-                &ref_paths,
-                &[],
-            )?;
+            let unsigned = narinfo::build_narinfo(&narinfo_input, &[])?;
             vec![sk.sign_fingerprint(unsigned.fingerprint.as_bytes())]
         } else {
             vec![]
         };
 
-        let narinfo_output = narinfo::build_narinfo(
-            &store_dir,
-            &sp,
-            &url,
-            entry.nar_hash,
-            entry.nar_size,
-            compression.clone(),
-            compressed.file_hash,
-            compressed.file_size,
-            &ref_paths,
-            &sigs,
-        )?;
+        let narinfo_output = narinfo::build_narinfo(&narinfo_input, &sigs)?;
 
         tracing::info!("  narinfo: {} bytes", narinfo_output.bytes.len());
 
@@ -329,7 +319,7 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
     tracing::info!(
         "manifest tree: {} nodes, root hash={}",
         manifest_nodes.len(),
-        hex::encode(&root_hash)
+        hex::encode(root_hash)
     );
 
     if !config.dry_run {

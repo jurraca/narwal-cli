@@ -41,6 +41,10 @@ pub struct WireTreeNode {
     pub t: u8,
 }
 
+/// A serialized tree node ready for upload: (msgpack bytes, SHA-256 of
+/// those bytes). The hash doubles as the Blossom blob address.
+pub type EncodedNode = (Vec<u8>, [u8; 32]);
+
 /// A directory entry: name + SHA256 of the child blob + byte size.
 #[derive(Clone)]
 pub struct DirEntry {
@@ -68,7 +72,7 @@ struct BuiltNode {
 /// Returns (all_nodes, root_hash) where all_nodes is a list of every
 /// node that must be uploaded (leaves first, then parents). Each node
 /// is (encoded_bytes, hash) where hash = SHA256(encoded_bytes).
-pub fn build_directory_tree(entries: Vec<DirEntry>) -> (Vec<(Vec<u8>, [u8; 32])>, [u8; 32]) {
+pub fn build_directory_tree(entries: Vec<DirEntry>) -> (Vec<EncodedNode>, [u8; 32]) {
     let mut sorted = entries;
     sorted.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
 
@@ -140,7 +144,10 @@ pub fn build_directory_tree(entries: Vec<DirEntry>) -> (Vec<(Vec<u8>, [u8; 32])>
         current_level = next_level;
     }
 
-    let root = current_level.into_iter().next().expect("tree must have at least one node");
+    let root = current_level
+        .into_iter()
+        .next()
+        .expect("tree must have at least one node");
     (
         all_nodes.into_iter().map(|n| (n.bytes, n.hash)).collect(),
         root.hash,
@@ -150,7 +157,7 @@ pub fn build_directory_tree(entries: Vec<DirEntry>) -> (Vec<(Vec<u8>, [u8; 32])>
 /// Build a single BUD-16 directory node from entries (no chunking).
 ///
 /// Used for small directories and as a building block.
-pub fn build_directory_node(entries: Vec<DirEntry>) -> (Vec<u8>, [u8; 32]) {
+pub fn build_directory_node(entries: Vec<DirEntry>) -> EncodedNode {
     let mut sorted = entries;
     sorted.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
 
@@ -193,7 +200,13 @@ mod tests {
 
     fn make_entries(count: usize) -> Vec<DirEntry> {
         (0..count)
-            .map(|i| make_entry(&format!("{:08x}.narinfo", i), (i % 256) as u8, 100 + i as u64))
+            .map(|i| {
+                make_entry(
+                    &format!("{:08x}.narinfo", i),
+                    (i % 256) as u8,
+                    100 + i as u64,
+                )
+            })
             .collect()
     }
 
@@ -274,14 +287,8 @@ mod tests {
 
     #[test]
     fn test_sorting_is_deterministic() {
-        let entries_a = vec![
-            make_entry("b.narinfo", 1, 1),
-            make_entry("a.narinfo", 2, 2),
-        ];
-        let entries_b = vec![
-            make_entry("a.narinfo", 2, 2),
-            make_entry("b.narinfo", 1, 1),
-        ];
+        let entries_a = vec![make_entry("b.narinfo", 1, 1), make_entry("a.narinfo", 2, 2)];
+        let entries_b = vec![make_entry("a.narinfo", 2, 2), make_entry("b.narinfo", 1, 1)];
         let (_, hash_a) = build_directory_tree(entries_a);
         let (_, hash_b) = build_directory_tree(entries_b);
         assert_eq!(hash_a, hash_b, "sorting must produce identical hashes");

@@ -16,44 +16,48 @@ pub struct NarInfoOutput {
     pub fingerprint: String,
 }
 
+/// The computed fields of one narinfo record. Everything except the
+/// signatures, which are attached separately: an unsigned build is
+/// needed first to compute the fingerprint they sign.
+pub struct NarInfoInput<'a> {
+    /// Logical store directory (usually `/nix/store`)
+    pub store_dir: &'a StoreDir,
+    /// Parsed store path (hashpart + name)
+    pub store_path: &'a StorePath,
+    /// Relative URL to the NAR blob (e.g. `nar/<nixbase32>.nar.xz`)
+    pub url: &'a str,
+    /// SHA-256 of uncompressed NAR bytes
+    pub nar_hash: [u8; 32],
+    /// Byte length of uncompressed NAR
+    pub nar_size: u64,
+    /// Compression format (Xz, Zstd, etc.)
+    pub compression: Compression,
+    /// SHA-256 of compressed bytes
+    pub file_hash: [u8; 32],
+    /// Byte length of compressed NAR
+    pub file_size: u64,
+    /// Store paths referenced by this path
+    pub references: &'a [StorePath],
+}
+
 /// Build a narinfo record from computed fields.
-///
-/// # Arguments
-/// * `store_dir` - Logical store directory (usually `/nix/store`)
-/// * `store_path` - Parsed store path (hashpart + name)
-/// * `url` - Relative URL to the NAR blob (e.g. `nar/<nixbase32>.nar.xz`)
-/// * `nar_hash` - SHA-256 of uncompressed NAR bytes
-/// * `nar_size` - Byte length of uncompressed NAR
-/// * `compression` - Compression format (Xz, Zstd, etc.)
-/// * `file_hash` - SHA-256 of compressed bytes
-/// * `file_size` - Byte length of compressed NAR
-/// * `references` - Store path hashparts referenced by this path
-/// * `signatures` - Pre-computed signatures to attach
 pub fn build_narinfo(
-    store_dir: &StoreDir,
-    store_path: &StorePath,
-    url: &str,
-    nar_hash: [u8; 32],
-    nar_size: u64,
-    compression: Compression,
-    file_hash: [u8; 32],
-    file_size: u64,
-    references: &[StorePath],
+    input: &NarInfoInput,
     signatures: &[NarInfoSignature],
 ) -> Result<NarInfoOutput> {
     let mut builder = NarInfoBuilder::new_in(
-        store_dir.clone(),
-        store_path.clone(),
-        url.to_string(),
-        NixHash::Sha256(nar_hash),
-        nar_size,
+        input.store_dir.clone(),
+        input.store_path.clone(),
+        input.url.to_string(),
+        NixHash::Sha256(input.nar_hash),
+        input.nar_size,
     )
-    .compression(compression)
-    .file_hash(Some(NixHash::Sha256(file_hash)))
-    .file_size(Some(file_size));
+    .compression(input.compression.clone())
+    .file_hash(Some(NixHash::Sha256(input.file_hash)))
+    .file_size(Some(input.file_size));
 
-    if !references.is_empty() {
-        builder = builder.references(references.to_vec());
+    if !input.references.is_empty() {
+        builder = builder.references(input.references.to_vec());
     }
 
     for sig in signatures {
@@ -64,7 +68,7 @@ pub fn build_narinfo(
         .build()
         .map_err(|e| anyhow!("narinfo build error: {}", e))?;
 
-    let fingerprint = info.fingerprint(store_dir);
+    let fingerprint = info.fingerprint(input.store_dir);
     let bytes = info.to_canonical_bytes();
 
     Ok(NarInfoOutput { bytes, fingerprint })
@@ -81,19 +85,18 @@ mod tests {
         let store_path =
             StorePath::from_basename(b"00000000000000000000000000000000-example").unwrap();
 
-        let output = build_narinfo(
-            &store_dir,
-            &store_path,
-            "nar/example.nar.xz",
-            [0x42; 32],
-            1024,
-            Compression::Xz,
-            [0x43; 32],
-            512,
-            &[],
-            &[],
-        )
-        .unwrap();
+        let input = NarInfoInput {
+            store_dir: &store_dir,
+            store_path: &store_path,
+            url: "nar/example.nar.xz",
+            nar_hash: [0x42; 32],
+            nar_size: 1024,
+            compression: Compression::Xz,
+            file_hash: [0x43; 32],
+            file_size: 512,
+            references: &[],
+        };
+        let output = build_narinfo(&input, &[]).unwrap();
 
         // Canonical bytes should contain the store path
         let text = std::str::from_utf8(&output.bytes).unwrap();
@@ -104,7 +107,9 @@ mod tests {
         assert!(text.contains("Compression: xz"));
 
         // Fingerprint starts with "1;" + store path
-        assert!(output.fingerprint.starts_with("1;/nix/store/00000000000000000000000000000000-example"));
+        assert!(output
+            .fingerprint
+            .starts_with("1;/nix/store/00000000000000000000000000000000-example"));
     }
 
     #[test]
@@ -113,19 +118,18 @@ mod tests {
         let store_path =
             StorePath::from_basename(b"00000000000000000000000000000000-test").unwrap();
 
-        let output = build_narinfo(
-            &store_dir,
-            &store_path,
-            "nar/test.nar.xz",
-            [0xAA; 32],
-            4096,
-            Compression::Xz,
-            [0xBB; 32],
-            2048,
-            &[],
-            &[],
-        )
-        .unwrap();
+        let input = NarInfoInput {
+            store_dir: &store_dir,
+            store_path: &store_path,
+            url: "nar/test.nar.xz",
+            nar_hash: [0xAA; 32],
+            nar_size: 4096,
+            compression: Compression::Xz,
+            file_hash: [0xBB; 32],
+            file_size: 2048,
+            references: &[],
+        };
+        let output = build_narinfo(&input, &[]).unwrap();
 
         // Parse it back
         let parsed = NarInfo::parse_in(&store_dir, &output.bytes).unwrap();
