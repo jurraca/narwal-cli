@@ -13,19 +13,23 @@ use std::sync::Arc;
 /// Configuration for fetching a cache root event.
 pub struct FetchConfig {
     /// Nostr signer, used for the client identity (local keys or bunker).
-    pub signer: Arc<dyn NostrSigner>,
+    /// If None, a signerless client is used — fine for read-only queries
+    /// (e.g. `trust`), which need no key material.
+    pub signer: Option<Arc<dyn NostrSigner>>,
     /// Relays to query.
     pub relays: Vec<String>,
     /// Named channel. If None, queries kind 17091 (default cache).
     /// If Some, queries kind 37091 with the given d-tag.
     pub channel: Option<String>,
-    /// Publisher pubkey (hex) to filter events by.
+    /// Publisher pubkey (hex or npub) to filter events by.
     /// If None, queries all pubkeys (first match wins).
     pub author: Option<String>,
 }
 
 /// Result of fetching the latest root event.
 pub struct RootEvent {
+    /// The event author's pubkey (hex) — the identity that signed it.
+    pub author: String,
     /// The htree URI (e.g. "htree://nhash1qq...").
     pub htree_uri: String,
     /// Blossom server URLs from the event's blossom tags.
@@ -39,7 +43,10 @@ pub struct RootEvent {
 /// Returns Ok(Some(event)) if found, Ok(None) if no event exists yet
 /// (first publish), or Err on network/relay errors.
 pub async fn fetch_latest_root(config: FetchConfig) -> Result<Option<RootEvent>> {
-    let client = Client::new(config.signer);
+    let client = match config.signer {
+        Some(signer) => Client::new(signer),
+        None => Client::default(),
+    };
 
     for relay in &config.relays {
         client.add_relay(relay).await?;
@@ -106,6 +113,7 @@ pub async fn fetch_latest_root(config: FetchConfig) -> Result<Option<RootEvent>>
     client.disconnect().await;
 
     Ok(Some(RootEvent {
+        author: event.pubkey.to_hex(),
         htree_uri,
         blossom_servers,
         nix_sig_keys,

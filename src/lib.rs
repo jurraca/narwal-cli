@@ -22,16 +22,19 @@ pub mod secrets;
 pub mod signing;
 pub mod store_path;
 pub mod tree_reader;
+pub mod trust;
 
 use anyhow::{anyhow, Result};
 use nix_derivation::{StoreDir, StorePath};
 use nix_narinfo::Compression;
-use nostr::prelude::Keys;
+use nostr::prelude::{Keys, ToBech32};
 use nostr::signer::NostrSigner;
 use std::collections::HashMap;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+pub use trust::{trust, OutputFormat, TrustConfig};
 
 /// Configuration for a publish operation.
 pub struct PublishConfig {
@@ -127,12 +130,12 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
 
     // Step 1: Fetch the latest root event from Nostr (atomic update guarantee).
     tracing::info!("fetching latest root event from Nostr");
-    let author_hex = signer.get_public_key().await?.to_hex();
+    let author_pk = signer.get_public_key().await?;
     let existing_root = nostr_fetch::fetch_latest_root(nostr_fetch::FetchConfig {
-        signer: signer.clone(),
+        signer: Some(signer.clone()),
         relays: config.relays.clone(),
         channel: config.channel.clone(),
-        author: Some(author_hex),
+        author: Some(author_pk.to_hex()),
     })
     .await?;
 
@@ -162,7 +165,10 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
     }
 
     // Step 3: Resolve closure of input paths.
-    tracing::info!("resolving closure of {} input paths", config.store_paths.len());
+    tracing::info!(
+        "resolving closure of {} input paths",
+        config.store_paths.len()
+    );
     let closure_entries = closure::resolve(&config.store_paths, &config.store_dir)?;
     tracing::info!("closure: {} paths", closure_entries.len());
 
@@ -172,9 +178,8 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
     // One uploader for the whole run: it caches the session auth token,
     // so per-blob uploads share a token instead of minting one each.
     // Skipped entirely on dry runs (no uploads happen).
-    let uploader = (!config.dry_run).then(|| {
-        blossom::BlossomUploader::new(signer.clone(), config.blossom_servers.clone())
-    });
+    let uploader = (!config.dry_run)
+        .then(|| blossom::BlossomUploader::new(signer.clone(), config.blossom_servers.clone()));
 
     for entry in &closure_entries {
         let basename = entry
@@ -232,13 +237,7 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
                     .find(|e| {
                         e.path
                             .file_name()
-                            .map(|n| {
-                                n.to_string_lossy()
-                                    .split('-')
-                                    .next()
-                                    .unwrap_or("")
-                                    == hp
-                            })
+                            .map(|n| n.to_string_lossy().split('-').next().unwrap_or("") == hp)
                             .unwrap_or(false)
                     })
                     .and_then(|e| {
@@ -356,6 +355,7 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
         .iter()
         .map(|sk| sk.public_key_string())
         .collect();
+    let consumer_keys_line = nix_sig_keys.join(" ");
 
     nostr_pub::publish_cache(nostr_pub::PublishConfig {
         signer,
@@ -366,6 +366,15 @@ pub async fn publish(config: PublishConfig) -> Result<()> {
         nix_sig_keys,
     })
     .await?;
+
+    // Consumer trust lines: what a client needs in nix.conf to accept this
+    // cache. Operators paste these into the cache's README (or point users
+    // at `narwal-cli trust --npub <npub>`).
+    if !consumer_keys_line.is_empty() {
+        let npub = author_pk.to_bech32().unwrap_or_else(|_| author_pk.to_hex());
+        tracing::info!("cache identity: {}", npub);
+        tracing::info!("consumers: trusted-public-keys = {}", consumer_keys_line);
+    }
 
     tracing::info!("publish complete");
     Ok(())

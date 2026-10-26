@@ -133,11 +133,42 @@ key, but treat the file as a bearer credential anyway (written 0600).
 
 Client side (fetching through Narwal):
 
+A consumer who knows the cache's npub (from a README, a project page,
+a friend) gets the Nix trust config from the same source that defines
+the cache — the root event on the relay. The event is signed by the
+publisher's Nostr key, so relays can withhold it but cannot forge one
+from the pinned npub. No key material is needed on the consumer side:
+
+```bash
+narwal-cli trust --npub npub1... --relay ws://<relay-host>:32847 \
+  --substituter http://<narwal-host>:8090
+```
+
+prints the paste-ready `nix.conf` lines (snippet on stdout, guidance
+on stderr). Without `--substituter` only the `trusted-public-keys`
+line is printed — the root event can't know which Narwal gateway a
+consumer uses, so pass the URL you learned out-of-band. For CI/agents:
+
+```bash
+export NIX_CONFIG="$(narwal-cli trust --npub npub1... \
+  --relay ws://<relay-host>:32847 \
+  --substituter http://<narwal-host>:8090 --format env)"
+```
+
+Or wire it manually:
+
 ```bash
 nix-store -r /nix/store/<hash>-hello-2.12.1 \
   --option substituters http://<narwal-host>:8090 \
   --option trusted-public-keys "mycache:<base64-pubkey>"
 ```
+
+The `trusted-public-keys` value(s) are the root event's `nixSigKey`
+tags verbatim — the same lines the publisher prints at the end of a
+successful publish run. Caches that publish no `nixSigKey` tags are
+refused by `trust` unless `--allow-unsigned` is given (stock Nix
+rejects their input-addressed paths; content-addressed paths are
+self-certifying).
 
 ## Development
 

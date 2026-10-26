@@ -68,6 +68,8 @@ struct Cli {
 
 /// Standalone steps. `pair` runs the interactive NIP-46 pairing ceremony
 /// on its own (scan QR, approve, save); publish runs take it from there.
+/// `trust` is consumer-side: fetch a cache's root event and print the
+/// Nix trust config from its nixSigKey tags.
 #[derive(Subcommand)]
 enum Commands {
     /// Pair with a signer app via nostrconnect:// QR code, then exit.
@@ -75,6 +77,38 @@ enum Commands {
     Pair {
         #[command(flatten)]
         pairing: PairingArgs,
+    },
+    /// Print the Nix trust config (`trusted-public-keys`) for a cache,
+    /// fetched from its root event on Nostr. No key material needed.
+    Trust {
+        /// Publisher npub (npub1...), hex pubkey, or nostr: URI. Pins the
+        /// cache identity: anyone can publish a cache event, so trust is
+        /// anchored to the author, not to whatever the relay returns.
+        #[arg(long)]
+        npub: String,
+
+        /// Nostr relay to query. Repeatable. Pass after `trust`.
+        #[arg(long = "relay")]
+        relays: Vec<String>,
+
+        /// Named cache channel (kind 37091). Omit for default cache (17091).
+        #[arg(long)]
+        channel: Option<String>,
+
+        /// Gateway substituter URL to include in the printed snippet.
+        /// Optional: the root event can't carry it (gateway choice is a
+        /// deployment concern), so pass the URL you learned out-of-band.
+        #[arg(long)]
+        substituter: Option<String>,
+
+        /// Output format: conf (nix.conf lines, default), env (NIX_CONFIG
+        /// payload), or json.
+        #[arg(long, default_value = "conf", value_parser = ["conf", "env", "json"])]
+        format: String,
+
+        /// Accept a cache that publishes no nixSigKey tags (unsigned cache).
+        #[arg(long = "allow-unsigned")]
+        allow_unsigned: bool,
     },
 }
 
@@ -96,8 +130,7 @@ struct PairingArgs {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -108,6 +141,28 @@ async fn main() -> Result<()> {
         let relays = narwal_cli::nip46::pair::resolve_handshake_relays(&pairing.bunker_relays);
         let file = pairing_file_path(pairing.pairing_file)?;
         narwal_cli::nip46::pair::pair_fresh(&relays, &file).await?;
+        return Ok(());
+    }
+
+    // Consumer-side trust lookup: no key source, no blossom, no store paths.
+    if let Some(Commands::Trust {
+        npub,
+        relays,
+        channel,
+        substituter,
+        format,
+        allow_unsigned,
+    }) = cli.command
+    {
+        narwal_cli::trust(narwal_cli::TrustConfig {
+            npub,
+            relays,
+            channel,
+            substituter,
+            format: narwal_cli::OutputFormat::parse(&format)?,
+            allow_unsigned,
+        })
+        .await?;
         return Ok(());
     }
 
@@ -145,9 +200,7 @@ fn validate_publish(cli: &Cli) -> Result<(), String> {
         .filter(|b| ***b)
         .count();
     if sources != 1 {
-        return Err(
-            "exactly one of --sec-file, --bunker or --qr is required".to_string(),
-        );
+        return Err("exactly one of --sec-file, --bunker or --qr is required".to_string());
     }
     if cli.blossom_servers.is_empty() {
         return Err("missing --blossom <BLOSSOM_SERVERS>".to_string());
@@ -309,7 +362,109 @@ mod tests {
         // via ps, shell history, and CI logs. Use --sec-file.
         let mut args = base_args();
         args.extend(["--sec", "nsec1deadbeef"]);
-        let err = Cli::try_parse_from(args).err().expect("--sec must be rejected");
-        assert!(err.to_string().contains("unexpected argument '--sec'"), "unexpected: {err}");
+        let err = Cli::try_parse_from(args)
+            .err()
+            .expect("--sec must be rejected");
+        assert!(
+            err.to_string().contains("unexpected argument '--sec'"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn trust_subcommand_parses_minimal() {
+        let cli = Cli::try_parse_from(vec![
+            "narwal-cli",
+            "trust",
+            "--npub",
+            "npub1abc",
+            "--relay",
+            "wss://relay.example.com",
+        ])
+        .unwrap();
+        let Some(Commands::Trust {
+            npub,
+            relays,
+            channel,
+            substituter,
+            format,
+            allow_unsigned,
+        }) = cli.command
+        else {
+            panic!("expected trust subcommand");
+        };
+        assert_eq!(npub, "npub1abc");
+        assert_eq!(relays, vec!["wss://relay.example.com".to_string()]);
+        assert_eq!(channel, None);
+        assert_eq!(substituter, None);
+        assert_eq!(format, "conf");
+        assert!(!allow_unsigned);
+    }
+
+    #[test]
+    fn trust_takes_all_flags() {
+        let cli = Cli::try_parse_from(vec![
+            "narwal-cli",
+            "trust",
+            "--npub",
+            "npub1abc",
+            "--relay",
+            "wss://r1",
+            "--relay",
+            "wss://r2",
+            "--channel",
+            "unstable",
+            "--substituter",
+            "https://gw.example.org",
+            "--format",
+            "env",
+            "--allow-unsigned",
+        ])
+        .unwrap();
+        let Some(Commands::Trust {
+            npub,
+            relays,
+            channel,
+            substituter,
+            format,
+            allow_unsigned,
+        }) = cli.command
+        else {
+            panic!("expected trust subcommand");
+        };
+        assert_eq!(npub, "npub1abc");
+        assert_eq!(relays, vec!["wss://r1".to_string(), "wss://r2".to_string()]);
+        assert_eq!(channel.as_deref(), Some("unstable"));
+        assert_eq!(substituter.as_deref(), Some("https://gw.example.org"));
+        assert_eq!(format, "env");
+        assert!(allow_unsigned);
+    }
+
+    #[test]
+    fn trust_requires_npub() {
+        let err = Cli::try_parse_from(vec!["narwal-cli", "trust", "--relay", "wss://r"])
+            .err()
+            .expect("missing --npub must be rejected");
+        assert!(err.to_string().contains("--npub"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn trust_rejects_unknown_format() {
+        let err = Cli::try_parse_from(vec![
+            "narwal-cli",
+            "trust",
+            "--npub",
+            "npub1abc",
+            "--relay",
+            "wss://r",
+            "--format",
+            "toml",
+        ])
+        .err()
+        .expect("unknown format must be rejected");
+        assert!(
+            err.to_string().contains("invalid value 'toml'"),
+            "unexpected: {err}"
+        );
     }
 }

@@ -73,7 +73,12 @@ addressed.
 - `nhash.rs` — bech32 `nhash` encoding of the tree root.
 - `nostr_pub.rs` — publish root event: kind 17091 (default cache) or
   37091 (named channel), tags `htree`, `blossom`, `nixSigKey`, `d`.
-- `nostr_fetch.rs` — fetch latest root event (for incremental updates).
+- `nostr_fetch.rs` — fetch latest root event (for incremental updates;
+  signer optional — signerless for read-only queries).
+- `trust.rs` — consumer-side `trust` subcommand: fetch a cache's root
+  event for a pinned npub and print the Nix trust config (`conf`/`env`
+  /`json`). Snippet to stdout, guidance to stderr; unsigned caches need
+  `--allow-unsigned`. No key material needed.
 - `nip46/` — remote Nostr signing: `--bunker` signer, `nostrconnect://` QR
   pairing (`pair` subcommand), pairing session persistence.
 - `secrets.rs` — key file loading; refuses group/world-readable files
@@ -91,6 +96,12 @@ addressed.
   file and doubles as the Blossom blob address and narinfo URL component.
 - Nostr kind 17091 = default cache, 37091 = named channel. The root event
   points at the hashtree via `htree://nhash...` and lists Blossom servers.
+- `nixSigKey` tag values are Nix's own public-key format and are copied
+  verbatim into consumers' `trusted-public-keys`. Trust discovery is
+  Nostr-anchored: keys read from the publisher's signed event (pinned
+  npub) are end-to-end; keys read from a gateway HTTP page just trust the
+  gateway operator. The `trust` subcommand implements the former and
+  requires `--npub`.
 - Key material is **file-only by design**. `--sec`, key args on the command
   line, etc. must never come back — they leak via `ps`, shell history, and
   CI logs. Key files below mode 0600 are refused at load time.
