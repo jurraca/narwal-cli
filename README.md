@@ -2,13 +2,11 @@
 
 Publish Nix store paths to Blossom and announce them via Nostr.
 
-A [Narwal](https://github.com/jurraca/narwal) cache can then
-source and index packages, and serve as a Nix binary cache.
+A [Narwal](https://github.com/jurraca/narwal) cache can then source and index packages, and serve as a Nix binary cache.
 
 ## What it does
 
-Given one or more `/nix/store` paths, it resolves the closure and for
-each path:
+Given one or more `/nix/store` paths, it resolves the closure and for each path:
 
 1. Encodes the NAR, computes `NarHash`/`NarSize`, scans references.
 2. Compresses (`xz`/`zstd`) → `FileHash`/`FileSize`, builds and signs
@@ -18,31 +16,21 @@ each path:
    hashtree root pointer to the relay (kind 17091 default cache,
    kind 37091 named channel).
 
-Narwal subscribes to those root events, indexes the manifest, serves
-narinfos itself, and 302-redirects NAR downloads straight to Blossom.
-Nix clients only ever see a regular binary cache.
+Narwal subscribes to those root events, indexes the manifest, serves narinfos itself, and 302-redirects NAR downloads straight to Blossom. Nix clients only ever see a regular binary cache.
 
 ## Stack
 
-Pure Rust, no Nix runtime dependency. Nix-format work (NAR
-encode/hash, reference scanning, narinfo build/sign, derivation
-parsing, nix base32) is handled by three [Cachix](https://github.com/cachix) crates:
+Pure Rust, no Nix runtime dependency. Nix-format work (NAR encode/hash, reference scanning, narinfo build/sign, derivation parsing, nix base32) is handled by three [Cachix](https://github.com/cachix) crates:
 
 - [`nix-archive`](https://crates.io/crates/nix-archive) — NAR encode/hash, reference scanning
 - [`nix-narinfo`](https://crates.io/crates/nix-narinfo) — narinfo build/sign, fingerprint
 - [`nix-derivation`](https://crates.io/crates/nix-derivation) — store path types, nix base32, `.drv` parsing
 
-Plus `nostr`/`nostr-sdk` (relay publish), `reqwest` (rustls, Blossom
-uploads), `ed25519-dalek` (narinfo signing), `xz2`/`zstd`
-(compression; link system liblzma/libzstd), `clap`, `tokio`.
+Plus `nostr`/`nostr-sdk` (relay publish), `reqwest` (rustls, Blossom uploads), `ed25519-dalek` (narinfo signing), `xz2`/`zstd` (compression; link system liblzma/libzstd), `clap`, `tokio`.
 
 ## Usage
 
-You need two secrets: your Nostr signing key ("nsec") to sign the
-event announcing the cache state and your Nix signing key to sign
-the package builds. You can choose to omit the latter, but stock
-Nix clients reject unsigned packages unless the client explicitly
-opts out.
+You need two secrets: your Nostr signing key ("nsec") to sign the event announcing the cache state and your Nix signing key to sign the package builds. You can choose to omit the latter, but stock Nix clients reject unsigned packages unless the client explicitly opts out.
 
 ```bash
 narwal-cli /nix/store/<hash>-hello-2.12.1 \
@@ -94,18 +82,11 @@ Both publisher secrets can be provided by file.
 - Nostr identity (`--sec-file`): file containing `nsec` or hex.
 - Nix cache key (`--nix-sig-key`): `nix keygen-secret` format file.
 
-Both files are refused at load time unless owner-only accessible
-(`chmod 600`); group/world-readable key files are a hard error, not
-a warning.
+Both files are refused at load time unless owner-only accessible (`chmod 600`); group/world-readable key files are a hard error, not a warning.
 
-NIP-46 bunkers are supported as an alternative to `--sec-file`:
-pass `--bunker "bunker://<pubkey>?relay=…&secret=…"` (or
-`NARWAL_BUNKER`) and the identity key never touches the publisher
-machine — signatures are requested from the signer app over Nostr.
-Exactly one of `--sec-file` / `--bunker` / `--qr` is required.
+NIP-46 bunkers are supported as an alternative to `--sec-file`: pass `--bunker "bunker://<pubkey>?relay=…&secret=…"` (or `NARWAL_BUNKER`) and the identity key never touches the publisher machine — signatures are requested from the signer app over Nostr. Exactly one of `--sec-file` / `--bunker` / `--qr` is required.
 
-Some signer apps (Amber) never export `bunker://` URLs — they scan a
-`nostrconnect://` QR the client shows instead. Two ways to use it:
+Some signer apps (Amber) never export `bunker://` URLs — they scan a `nostrconnect://` QR the client shows instead. Two ways to use it:
 
 - `narwal-cli pair` — standalone ceremony: prints URI + terminal QR,
   waits up to 1 minute for the signer app, which answers with a
@@ -122,32 +103,18 @@ Some signer apps (Amber) never export `bunker://` URLs — they scan a
 - `--qr` on publish — same ceremony inline when no pairing is stored,
   straight to publishing afterwards.
 
-Later runs reuse the stored app key **and the stored relays** — Amber
-recognizes the app, no re-scan; each run just signs (subject to Amber's
-own policy). Using the stored relays matters: re-deriving from CLI
-defaults would talk to a relay the signer never checks, and the request
-would silently never be seen. On each reuse the CLI also asks the signer
-where it is now (`switch_relays`, short timeout) and updates the file, so
-a signer that moved stays reachable. The app key is not the identity
-key, but treat the file as a bearer credential anyway (written 0600).
+Later runs reuse the stored app key **and the stored relays** — Amber recognizes the app, no re-scan; each run just signs (subject to Amber's own policy). Using the stored relays matters: re-deriving from CLI defaults would talk to a relay the signer never checks, and the request would silently never be seen. On each reuse the CLI also asks the signer where it is now (`switch_relays`, short timeout) and updates the file, so a signer that moved stays reachable. The app key is not the identity key, but treat the file as a bearer credential anyway (written 0600).
 
 Client side (fetching through Narwal):
 
-A consumer who knows the cache's npub (from a README, a project page,
-a friend) gets the Nix trust config from the same source that defines
-the cache — the root event on the relay. The event is signed by the
-publisher's Nostr key, so relays can withhold it but cannot forge one
-from the pinned npub. No key material is needed on the consumer side:
+A consumer who knows the cache's npub (from a README, a project page, a friend) gets the Nix trust config from the same source that defines the cache — the root event on the relay. The event is signed by the publisher's Nostr key, so relays can withhold it but cannot forge one from the pinned npub. No key material is needed on the consumer side:
 
 ```bash
 narwal-cli trust --npub npub1... --relay ws://<relay-host>:32847 \
   --substituter http://<narwal-host>:8090
 ```
 
-prints the paste-ready `nix.conf` lines (snippet on stdout, guidance
-on stderr). Without `--substituter` only the `trusted-public-keys`
-line is printed — the root event can't know which Narwal gateway a
-consumer uses, so pass the URL you learned out-of-band. For CI/agents:
+prints the paste-ready `nix.conf` lines (snippet on stdout, guidance on stderr). Without `--substituter` only the `trusted-public-keys` line is printed — the root event can't know which Narwal gateway a consumer uses, so pass the URL you learned out-of-band. For CI/agents:
 
 ```bash
 export NIX_CONFIG="$(narwal-cli trust --npub npub1... \
@@ -163,12 +130,7 @@ nix-store -r /nix/store/<hash>-hello-2.12.1 \
   --option trusted-public-keys "mycache:<base64-pubkey>"
 ```
 
-The `trusted-public-keys` value(s) are the root event's `nixSigKey`
-tags verbatim — the same lines the publisher prints at the end of a
-successful publish run. Caches that publish no `nixSigKey` tags are
-refused by `trust` unless `--allow-unsigned` is given (stock Nix
-rejects their input-addressed paths; content-addressed paths are
-self-certifying).
+The `trusted-public-keys` value(s) are the root event's `nixSigKey` tags verbatim — the same lines the publisher prints at the end of a successful publish run. Caches that publish no `nixSigKey` tags are refused by `trust` unless `--allow-unsigned` is given (stock Nix rejects their input-addressed paths; content-addressed paths are self-certifying).
 
 ## Development
 
